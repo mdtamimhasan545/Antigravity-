@@ -69,6 +69,7 @@ import com.localaichat.app.ui.theme.Emerald500
 import com.localaichat.app.ui.theme.Rose600
 import com.localaichat.app.ui.theme.Slate400
 import com.localaichat.app.ui.theme.Slate50
+import com.localaichat.app.ui.theme.Slate700
 import com.localaichat.app.ui.theme.Slate800
 import com.localaichat.app.ui.theme.Slate900
 import com.localaichat.app.ui.theme.Slate950
