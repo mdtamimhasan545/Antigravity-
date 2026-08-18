@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Local AI Chat</string>
+    <string name="new_chat">New Chat</string>
+    <string name="settings">Settings</string>
+    <string name="type_message_hint">Type a message...</string>
+    <string name="no_model_selected">No model selected. Tap Settings to choose a .gguf file from Downloads.</string>
+</resources>
