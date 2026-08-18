@@ -18,9 +18,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -51,9 +55,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.localaichat.app.data.engine.GgufMetadata
 import com.localaichat.app.data.model.DefaultPersonas
 import com.localaichat.app.data.model.ModelConfig
 import com.localaichat.app.ui.theme.Blue600
+import com.localaichat.app.ui.theme.Emerald500
 import com.localaichat.app.ui.theme.Slate400
 import com.localaichat.app.ui.theme.Slate50
 import com.localaichat.app.ui.theme.Slate700
@@ -66,6 +72,9 @@ import kotlin.math.roundToInt
 @Composable
 fun SettingsScreen(
     currentConfig: ModelConfig,
+    modelMetadata: GgufMetadata?,
+    isDarkTheme: Boolean,
+    onToggleTheme: () -> Unit,
     onSelectModelClick: () -> Unit,
     onSaveConfig: (ModelConfig) -> Unit,
     onNavigateBack: () -> Unit,
@@ -94,6 +103,15 @@ fun SettingsScreen(
                             imageVector = Icons.Default.ArrowBack,
                             contentDescription = "Back",
                             tint = Slate50
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onToggleTheme) {
+                        Icon(
+                            imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                            contentDescription = "Toggle Theme",
+                            tint = Slate400
                         )
                     }
                 },
@@ -129,7 +147,7 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Model File (.gguf)",
+                            text = "GGUF Model File",
                             style = MaterialTheme.typography.titleMedium,
                             color = Slate50,
                             fontWeight = FontWeight.SemiBold
@@ -141,6 +159,33 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = Slate400
                     )
+
+                    // GGUF Metadata Inspector view
+                    if (modelMetadata != null && modelMetadata.isValidGguf) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Slate950)
+                                .padding(10.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.CheckCircle, null, tint = Emerald500, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Valid GGUF v${modelMetadata.version} Verified", fontSize = 12.sp, color = Emerald500, fontWeight = FontWeight.Bold)
+                                }
+                                Text("• Architecture: ${modelMetadata.architecture}", fontSize = 12.sp, color = Slate400)
+                                Text("• Tensors: ${modelMetadata.tensorCount} layers", fontSize = 12.sp, color = Slate400)
+                                if (modelMetadata.fileSizeBytes > 0) {
+                                    val sizeMb = modelMetadata.fileSizeBytes / (1024 * 1024)
+                                    Text("• File Size: $sizeMb MB", fontSize = 12.sp, color = Slate400)
+                                }
+                            }
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(12.dp))
                     Button(
                         onClick = onSelectModelClick,

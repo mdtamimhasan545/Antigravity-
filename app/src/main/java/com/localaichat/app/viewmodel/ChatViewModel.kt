@@ -4,9 +4,14 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.localaichat.app.data.audio.SpeechManager
+import com.localaichat.app.data.engine.GgufMetadata
 import com.localaichat.app.data.engine.LocalInferenceEngine
 import com.localaichat.app.data.model.ChatMessage
 import com.localaichat.app.data.model.ChatSession
@@ -14,6 +19,7 @@ import com.localaichat.app.data.model.DefaultPersonas
 import com.localaichat.app.data.model.MessageRole
 import com.localaichat.app.data.model.ModelConfig
 import com.localaichat.app.data.model.Persona
+import com.localaichat.app.data.repository.ChatRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,7 +34,11 @@ data class ChatUiState(
     val isGenerating: Boolean = false,
     val selectedPersonaId: String = "general",
     val modelConfig: ModelConfig = ModelConfig(),
+    val modelMetadata: GgufMetadata? = null,
     val currentlyPlayingAudioId: String? = null,
+    val sessionToRename: ChatSession? = null,
+    val sessionToDelete: ChatSession? = null,
+    val isDarkTheme: Boolean = true,
     val errorMessage: String? = null
 ) {
     val currentSession: ChatSession?
@@ -49,6 +59,7 @@ data class ChatUiState(
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
+    private val repository = ChatRepository(application.applicationContext)
     private val engine = LocalInferenceEngine(application.applicationContext)
     val speechManager = SpeechManager(application.applicationContext)
 
@@ -58,9 +69,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var generationJob: Job? = null
 
     init {
-        createNewSession()
+        loadPersistedData()
 
-        // Observe TTS audio playing state
         viewModelScope.launch {
             speechManager.currentlyPlayingId.collect { playingId ->
                 _uiState.update { it.copy(currentlyPlayingAudioId = playingId) }
@@ -68,14 +78,56 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun loadPersistedData() {
+        val (savedSessions, activeId) = repository.loadSessions()
+        val savedConfig = repository.loadModelConfig()
+        val savedPersona = repository.loadSelectedPersona()
+        val isDark = repository.loadThemeDark()
+
+        if (savedSessions.isNotEmpty()) {
+            val validActiveId = if (savedSessions.any { it.id == activeId }) activeId ?: savedSessions.first().id else savedSessions.first().id
+            _uiState.update {
+                it.copy(
+                    sessions = savedSessions,
+                    currentSessionId = validActiveId,
+                    modelConfig = savedConfig,
+                    selectedPersonaId = savedPersona,
+                    isDarkTheme = isDark
+                )
+            }
+        } else {
+            createNewSession()
+            _uiState.update {
+                it.copy(
+                    modelConfig = savedConfig,
+                    selectedPersonaId = savedPersona,
+                    isDarkTheme = isDark
+                )
+            }
+        }
+    }
+
+    private fun persistState() {
+        repository.saveSessions(_uiState.value.sessions, _uiState.value.currentSessionId)
+        repository.saveModelConfig(_uiState.value.modelConfig)
+        repository.saveSelectedPersona(_uiState.value.selectedPersonaId)
+        repository.saveThemeDark(_uiState.value.isDarkTheme)
+    }
+
+    fun toggleTheme() {
+        _uiState.update { it.copy(isDarkTheme = !it.isDarkTheme) }
+        persistState()
+    }
+
     fun createNewSession() {
+        vibrate(30)
         val newSession = ChatSession(
             title = "New Chat",
             personaId = _uiState.value.selectedPersonaId,
             messages = listOf(
                 ChatMessage(
                     role = MessageRole.ASSISTANT,
-                    content = "Hello! I am your offline AI Assistant. Choose a model or persona to begin."
+                    content = "Hello! I am your offline AI Assistant. How can I help you today?"
                 )
             )
         )
@@ -85,19 +137,31 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 currentSessionId = newSession.id
             )
         }
+        persistState()
     }
 
     fun selectSession(sessionId: String) {
         _uiState.update { it.copy(currentSessionId = sessionId) }
+        persistState()
     }
 
     fun togglePinSession(sessionId: String) {
+        vibrate(20)
         _uiState.update { state ->
             val updated = state.sessions.map {
                 if (it.id == sessionId) it.copy(isPinned = !it.isPinned) else it
             }
             state.copy(sessions = updated)
         }
+        persistState()
+    }
+
+    fun showRenameDialog(session: ChatSession) {
+        _uiState.update { it.copy(sessionToRename = session) }
+    }
+
+    fun hideRenameDialog() {
+        _uiState.update { it.copy(sessionToRename = null) }
     }
 
     fun renameSession(sessionId: String, newTitle: String) {
@@ -106,11 +170,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val updated = state.sessions.map {
                 if (it.id == sessionId) it.copy(title = newTitle.trim()) else it
             }
-            state.copy(sessions = updated)
+            state.copy(sessions = updated, sessionToRename = null)
         }
+        persistState()
     }
 
-    fun deleteSession(sessionId: String) {
+    fun showDeleteDialog(session: ChatSession) {
+        _uiState.update { it.copy(sessionToDelete = session) }
+    }
+
+    fun hideDeleteDialog() {
+        _uiState.update { it.copy(sessionToDelete = null) }
+    }
+
+    fun confirmDeleteSession() {
+        val target = _uiState.value.sessionToDelete ?: return
+        val sessionId = target.id
+        vibrate(35)
         _uiState.update { state ->
             val remaining = state.sessions.filter { it.id != sessionId }
             val nextActiveId = if (state.currentSessionId == sessionId) {
@@ -118,11 +194,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 state.currentSessionId
             }
-            state.copy(sessions = remaining, currentSessionId = nextActiveId)
+            state.copy(sessions = remaining, currentSessionId = nextActiveId, sessionToDelete = null)
         }
         if (_uiState.value.sessions.isEmpty()) {
             createNewSession()
         }
+        persistState()
     }
 
     fun setSearchQuery(query: String) {
@@ -130,6 +207,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectPersona(personaId: String) {
+        vibrate(20)
         val persona = DefaultPersonas.getById(personaId)
         _uiState.update { state ->
             val updatedConfig = state.modelConfig.copy(
@@ -141,12 +219,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 modelConfig = updatedConfig
             )
         }
+        persistState()
     }
 
     fun sendMessage(userText: String) {
         val trimmed = userText.trim()
         if (trimmed.isEmpty() || _uiState.value.isGenerating) return
 
+        vibrate(25)
         val userMessage = ChatMessage(role = MessageRole.USER, content = trimmed)
         val assistantMessage = ChatMessage(
             role = MessageRole.ASSISTANT,
@@ -179,6 +259,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val currentSession = _uiState.value.currentSession ?: return
         if (_uiState.value.isGenerating || currentSession.messages.size < 2) return
 
+        vibrate(30)
         val lastMessage = currentSession.messages.last()
         if (lastMessage.role != MessageRole.ASSISTANT) return
 
@@ -244,7 +325,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             } catch (e: Exception) {
-                responseBuilder.append("\n[Generation interrupted: ${e.localizedMessage}]")
+                responseBuilder.append("\n[Error during generation: ${e.localizedMessage}]")
             } finally {
                 _uiState.update { state ->
                     val updatedSessions = state.sessions.map { session ->
@@ -263,12 +344,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     state.copy(sessions = updatedSessions, isGenerating = false)
                 }
+                persistState()
             }
         }
     }
 
     fun stopGeneration() {
         generationJob?.cancel()
+        vibrate(40)
         _uiState.update { state ->
             val currentId = state.currentSessionId
             val updatedSessions = state.sessions.map { session ->
@@ -281,9 +364,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
             state.copy(sessions = updatedSessions, isGenerating = false)
         }
+        persistState()
     }
 
     fun toggleSpeakMessage(message: ChatMessage) {
+        vibrate(20)
         speechManager.speak(message.id, message.content)
     }
 
@@ -307,24 +392,28 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setModelUri(uri: Uri, fileName: String) {
-        val success = engine.loadModel(uri, fileName)
+        val (success, metadata) = engine.loadModel(uri, fileName)
         if (success) {
             _uiState.update { state ->
                 state.copy(
                     modelConfig = state.modelConfig.copy(
                         modelUri = uri.toString(),
                         modelName = fileName
-                    )
+                    ),
+                    modelMetadata = metadata
                 )
             }
+            persistState()
         }
     }
 
     fun updateConfig(config: ModelConfig) {
         _uiState.update { it.copy(modelConfig = config) }
+        persistState()
     }
 
     fun clearCurrentChat() {
+        vibrate(30)
         val currentId = _uiState.value.currentSessionId
         _uiState.update { state ->
             val updatedSessions = state.sessions.map { session ->
@@ -333,7 +422,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         messages = listOf(
                             ChatMessage(
                                 role = MessageRole.ASSISTANT,
-                                content = "Conversation cleared. Ready for your next query!"
+                                content = "Conversation cleared. Ready for your next question!"
                             )
                         )
                     )
@@ -341,6 +430,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
             state.copy(sessions = updatedSessions)
         }
+        persistState()
+    }
+
+    private fun vibrate(durationMs: Long) {
+        try {
+            val app = getApplication<Application>()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = app.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                vm?.defaultVibrator?.vibrate(VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                val v = app.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+                v?.vibrate(durationMs)
+            }
+        } catch (_: Exception) {}
     }
 
     override fun onCleared() {

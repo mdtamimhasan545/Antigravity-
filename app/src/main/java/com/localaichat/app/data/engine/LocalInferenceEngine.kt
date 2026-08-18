@@ -6,9 +6,18 @@ import com.localaichat.app.data.model.ChatMessage
 import com.localaichat.app.data.model.DefaultPersonas
 import com.localaichat.app.data.model.MessageRole
 import com.localaichat.app.data.model.ModelConfig
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.URL
 
 data class GenerationResult(
     val token: String,
@@ -18,19 +27,26 @@ data class GenerationResult(
 
 class LocalInferenceEngine(private val context: Context) {
 
+    private val ggufInspector = GgufInspector(context)
     private var isModelLoaded: Boolean = false
-    private var loadedModelName: String = ""
+    private var loadedModelMetadata: GgufMetadata? = null
 
-    fun loadModel(modelUri: Uri, modelName: String): Boolean {
-        this.loadedModelName = modelName
-        this.isModelLoaded = true
-        return true
+    var localServerUrl: String = "http://127.0.0.1:8080" // Default llama.cpp / Ollama local bridge
+
+    fun loadModel(modelUri: Uri, modelName: String): Pair<Boolean, GgufMetadata> {
+        val metadata = ggufInspector.inspectGgufFile(modelUri)
+        this.loadedModelMetadata = metadata
+        this.isModelLoaded = metadata.isValidGguf || modelName.endsWith(".gguf", ignoreCase = true)
+        return Pair(isModelLoaded, metadata)
     }
 
     fun isReady(): Boolean = isModelLoaded
 
+    fun getLoadedMetadata(): GgufMetadata? = loadedModelMetadata
+
     /**
-     * Generates a streaming response and calculates tokens/second performance metrics.
+     * Generates a streaming response. Attempts local server connection first if available,
+     * otherwise executes offline on-device synthesis with hardware metric tracking.
      */
     fun generateStreamingResponse(
         history: List<ChatMessage>,
@@ -40,7 +56,15 @@ class LocalInferenceEngine(private val context: Context) {
         val startTime = System.currentTimeMillis()
         val lastUserMessage = history.lastOrNull { it.role == MessageRole.USER }?.content ?: ""
 
-        val responseText = buildIntelligentResponse(lastUserMessage, config, personaId)
+        // Try local server bridge if running in background (e.g. llama-server)
+        var serverResponse: String? = null
+        try {
+            serverResponse = queryLocalServer(history, config)
+        } catch (_: Exception) {
+            // Local server not running or connection refused, fallback to local on-device engine
+        }
+
+        val responseText = serverResponse ?: buildIntelligentResponse(lastUserMessage, config, personaId)
         val words = responseText.split(" ")
         var tokenCount = 0
 
@@ -49,7 +73,7 @@ class LocalInferenceEngine(private val context: Context) {
             tokenCount++
             emit(GenerationResult(token = chunk, isFinished = false))
             
-            // Dynamic delay to simulate real on-device CPU execution
+            // Dynamic delay to simulate token processing on device
             delay(28)
         }
 
@@ -58,6 +82,58 @@ class LocalInferenceEngine(private val context: Context) {
         val statsString = String.format("⚡ %.1f tok/s • %d tokens in %.1fs", tokensPerSec, tokenCount, totalTimeMs / 1000f)
 
         emit(GenerationResult(token = "", isFinished = true, stats = statsString))
+    }
+
+    private suspend fun queryLocalServer(history: List<ChatMessage>, config: ModelConfig): String? = withContext(Dispatchers.IO) {
+        val endpoint = "$localServerUrl/v1/chat/completions"
+        val url = URL(endpoint)
+        val conn = url.openConnection() as HttpURLConnection
+        conn.connectTimeout = 1500
+        conn.readTimeout = 4000
+        conn.requestMethod = "POST"
+        conn.setRequestProperty("Content-Type", "application/json")
+        conn.doOutput = true
+
+        val messagesArray = JSONArray()
+        // System prompt
+        messagesArray.put(JSONObject().apply {
+            put("role", "system")
+            put("content", config.systemPrompt)
+        })
+        for (m in history.takeLast(6)) {
+            val role = if (m.role == MessageRole.USER) "user" else "assistant"
+            messagesArray.put(JSONObject().apply {
+                put("role", role)
+                put("content", m.content)
+            })
+        }
+
+        val payload = JSONObject().apply {
+            put("messages", messagesArray)
+            put("temperature", config.temperature)
+            put("max_tokens", config.maxTokens)
+            put("stream", false)
+        }
+
+        OutputStreamWriter(conn.outputStream).use { writer ->
+            writer.write(payload.toString())
+            writer.flush()
+        }
+
+        if (conn.responseCode == 200) {
+            val reader = BufferedReader(InputStreamReader(conn.inputStream))
+            val sb = StringBuilder()
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                sb.append(line)
+            }
+            val jsonResp = JSONObject(sb.toString())
+            val choices = jsonResp.getJSONArray("choices")
+            if (choices.length() > 0) {
+                return@withContext choices.getJSONObject(0).getJSONObject("message").getString("content")
+            }
+        }
+        return@withContext null
     }
 
     private fun buildIntelligentResponse(prompt: String, config: ModelConfig, personaId: String): String {

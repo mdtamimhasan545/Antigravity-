@@ -39,13 +39,16 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
-            contentResolver.takePersistableUriPermission(
-                it,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION
-            )
+            try {
+                contentResolver.takePersistableUriPermission(
+                    it,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {}
+
             val fileName = getFileName(it) ?: "custom_model.gguf"
             viewModel.setModelUri(it, fileName)
-            Toast.makeText(this, "Model loaded: $fileName", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Model selected: $fileName", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -76,7 +79,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         setContent {
-            LocalAIChatAppTheme {
+            val uiState by viewModel.uiState.collectAsState()
+
+            LocalAIChatAppTheme(darkTheme = uiState.isDarkTheme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = Slate950
@@ -105,7 +110,12 @@ class MainActivity : ComponentActivity() {
                         onNewChat = { viewModel.createNewSession() },
                         onSelectSession = { viewModel.selectSession(it) },
                         onTogglePinSession = { viewModel.togglePinSession(it) },
-                        onDeleteSession = { viewModel.deleteSession(it) },
+                        onShowRenameDialog = { viewModel.showRenameDialog(it) },
+                        onRenameSession = { id, title -> viewModel.renameSession(id, title) },
+                        onHideRenameDialog = { viewModel.hideRenameDialog() },
+                        onShowDeleteDialog = { viewModel.showDeleteDialog(it) },
+                        onConfirmDeleteSession = { viewModel.confirmDeleteSession() },
+                        onHideDeleteDialog = { viewModel.hideDeleteDialog() },
                         onSearchChange = { viewModel.setSearchQuery(it) },
                         onSelectPersona = { viewModel.selectPersona(it) },
                         onClearChat = { viewModel.clearCurrentChat() },
@@ -116,6 +126,9 @@ class MainActivity : ComponentActivity() {
                 "settings" -> {
                     SettingsScreen(
                         currentConfig = uiState.modelConfig,
+                        modelMetadata = uiState.modelMetadata,
+                        isDarkTheme = uiState.isDarkTheme,
+                        onToggleTheme = { viewModel.toggleTheme() },
                         onSelectModelClick = {
                             openDocumentLauncher.launch(arrayOf("*/*"))
                         },
@@ -143,7 +156,7 @@ class MainActivity : ComponentActivity() {
         }
         try {
             speechRecognitionLauncher.launch(intent)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             Toast.makeText(this, "Speech recognition is not supported on this device.", Toast.LENGTH_SHORT).show()
         }
     }

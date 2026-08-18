@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -62,7 +63,8 @@ fun DrawerContent(
     onNewChat: () -> Unit,
     onSelectSession: (String) -> Unit,
     onTogglePinSession: (String) -> Unit,
-    onDeleteSession: (String) -> Unit,
+    onRenameSession: (ChatSession) -> Unit,
+    onDeleteSession: (ChatSession) -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -177,7 +179,7 @@ fun DrawerContent(
         Divider(color = Slate800, modifier = Modifier.padding(vertical = 8.dp))
 
         Text(
-            text = "CHATS",
+            text = "CONVERSATIONS",
             fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold,
             color = Slate400,
@@ -197,7 +199,7 @@ fun DrawerContent(
                         .clip(RoundedCornerShape(8.dp))
                         .background(if (isActive) Slate800 else Slate900.copy(alpha = 0.6f))
                         .clickable { onSelectSession(session.id) }
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -222,30 +224,43 @@ fun DrawerContent(
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Rename Button
+                        IconButton(
+                            onClick = { onRenameSession(session) },
+                            modifier = Modifier.size(22.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Rename",
+                                tint = Slate400,
+                                modifier = Modifier.size(13.dp)
+                            )
+                        }
+
                         // Pin Button
                         IconButton(
                             onClick = { onTogglePinSession(session.id) },
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(22.dp)
                         ) {
                             Icon(
                                 imageVector = if (session.isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
                                 contentDescription = "Pin",
                                 tint = if (session.isPinned) Blue600 else Slate400,
-                                modifier = Modifier.size(15.dp)
+                                modifier = Modifier.size(13.dp)
                             )
                         }
 
                         // Delete Button
                         if (sessions.size > 1) {
                             IconButton(
-                                onClick = { onDeleteSession(session.id) },
-                                modifier = Modifier.size(24.dp)
+                                onClick = { onDeleteSession(session) },
+                                modifier = Modifier.size(22.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.DeleteOutline,
                                     contentDescription = "Delete",
                                     tint = Slate400,
-                                    modifier = Modifier.size(15.dp)
+                                    modifier = Modifier.size(13.dp)
                                 )
                             }
                         }

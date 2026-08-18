@@ -26,6 +26,9 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -34,13 +37,20 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,12 +59,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.localaichat.app.data.model.ChatMessage
+import com.localaichat.app.data.model.ChatSession
 import com.localaichat.app.data.model.MessageRole
 import com.localaichat.app.ui.components.ChatBubble
 import com.localaichat.app.ui.components.DrawerContent
 import com.localaichat.app.ui.components.MessageInputBar
 import com.localaichat.app.ui.theme.Blue600
 import com.localaichat.app.ui.theme.Emerald500
+import com.localaichat.app.ui.theme.Rose600
 import com.localaichat.app.ui.theme.Slate400
 import com.localaichat.app.ui.theme.Slate50
 import com.localaichat.app.ui.theme.Slate800
@@ -75,7 +87,12 @@ fun ChatScreen(
     onNewChat: () -> Unit,
     onSelectSession: (String) -> Unit,
     onTogglePinSession: (String) -> Unit,
-    onDeleteSession: (String) -> Unit,
+    onShowRenameDialog: (ChatSession) -> Unit,
+    onRenameSession: (String, String) -> Unit,
+    onHideRenameDialog: () -> Unit,
+    onShowDeleteDialog: (ChatSession) -> Unit,
+    onConfirmDeleteSession: () -> Unit,
+    onHideDeleteDialog: () -> Unit,
     onSearchChange: (String) -> Unit,
     onSelectPersona: (String) -> Unit,
     onClearChat: () -> Unit,
@@ -93,6 +110,65 @@ fun ChatScreen(
         if (currentMessages.isNotEmpty()) {
             listState.animateScrollToItem(currentMessages.size - 1)
         }
+    }
+
+    // Rename Session Dialog
+    if (uiState.sessionToRename != null) {
+        var renameText by remember(uiState.sessionToRename) { mutableStateOf(uiState.sessionToRename.title) }
+        AlertDialog(
+            onDismissRequest = onHideRenameDialog,
+            containerColor = Slate900,
+            title = { Text("Rename Chat", color = Slate50, fontWeight = FontWeight.Bold) },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Slate50,
+                        unfocusedTextColor = Slate50,
+                        focusedBorderColor = Blue600,
+                        unfocusedBorderColor = Slate700
+                    )
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { onRenameSession(uiState.sessionToRename.id, renameText) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Blue600)
+                ) {
+                    Text("Save", color = Slate50)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onHideRenameDialog) {
+                    Text("Cancel", color = Slate400)
+                }
+            }
+        )
+    }
+
+    // Delete Session Confirmation Dialog
+    if (uiState.sessionToDelete != null) {
+        AlertDialog(
+            onDismissRequest = onHideDeleteDialog,
+            containerColor = Slate900,
+            title = { Text("Delete Conversation?", color = Slate50, fontWeight = FontWeight.Bold) },
+            text = { Text("Are you sure you want to delete \"${uiState.sessionToDelete.title}\"? This action cannot be undone.", color = Slate400) },
+            confirmButton = {
+                Button(
+                    onClick = onConfirmDeleteSession,
+                    colors = ButtonDefaults.buttonColors(containerColor = Rose600)
+                ) {
+                    Text("Delete", color = Slate50)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onHideDeleteDialog) {
+                    Text("Cancel", color = Slate400)
+                }
+            }
+        )
     }
 
     ModalNavigationDrawer(
@@ -117,7 +193,8 @@ fun ChatScreen(
                         scope.launch { drawerState.close() }
                     },
                     onTogglePinSession = onTogglePinSession,
-                    onDeleteSession = onDeleteSession,
+                    onRenameSession = onShowRenameDialog,
+                    onDeleteSession = onShowDeleteDialog,
                     onOpenSettings = {
                         scope.launch { drawerState.close() }
                         onNavigateToSettings()
@@ -130,7 +207,6 @@ fun ChatScreen(
             topBar = {
                 CenterAlignedTopAppBar(
                     title = {
-                        // Model and Persona status pill
                         Row(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(16.dp))
@@ -166,7 +242,6 @@ fun ChatScreen(
                         }
                     },
                     actions = {
-                        // Share Button
                         IconButton(onClick = onShareChat) {
                             Icon(
                                 imageVector = Icons.Default.Share,
@@ -175,7 +250,6 @@ fun ChatScreen(
                                 modifier = Modifier.size(20.dp)
                             )
                         }
-                        // Clear Chat Button
                         IconButton(onClick = onClearChat) {
                             Icon(
                                 imageVector = Icons.Default.DeleteSweep,
@@ -184,7 +258,6 @@ fun ChatScreen(
                                 modifier = Modifier.size(20.dp)
                             )
                         }
-                        // Settings Button
                         IconButton(onClick = onNavigateToSettings) {
                             Icon(
                                 imageVector = Icons.Default.Settings,
@@ -217,7 +290,6 @@ fun ChatScreen(
                     .padding(paddingValues)
             ) {
                 if (currentMessages.size <= 1) {
-                    // Empty / Welcome state
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -253,7 +325,6 @@ fun ChatScreen(
                             modifier = Modifier.padding(top = 4.dp, bottom = 20.dp)
                         )
 
-                        // Suggestion prompt chips
                         val suggestions = when (uiState.selectedPersonaId) {
                             "coder" -> listOf(
                                 "🐍 Write a Python script with async/await",
@@ -263,7 +334,7 @@ fun ChatScreen(
                             "bangla" -> listOf(
                                 "🇧🇩 বাংলায় একটি অনুপ্রেরণামূলক কবিতা লেখো",
                                 "📖 কৃত্রিম বুদ্ধিমত্তা কীভাবে কাজ করে বাংলায় বোঝাও",
-                                "📝 একটি অফিশিয়াল ছুটির আবেদনের ফরম্যাট দাও"
+                                "📝 একটি ছুটির আবেদনের ফরম্যাট দাও"
                             )
                             "concise" -> listOf(
                                 "⚡ Top 5 Linux commands in Termux",
@@ -271,7 +342,7 @@ fun ChatScreen(
                                 "⚡ Summary of Quantum Computing"
                             )
                             else -> listOf(
-                                "💡 Explain how GGUF Quantization works on mobile",
+                                "💡 Explain GGUF Quantization simply",
                                 "💻 Write a clean Python web scraper",
                                 "🌍 What are the top advancements in Edge AI?"
                             )
@@ -300,7 +371,6 @@ fun ChatScreen(
                         }
                     }
                 } else {
-                    // Chat Message List
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
